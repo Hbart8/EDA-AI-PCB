@@ -473,6 +473,26 @@
 		return null;
 	}
 
+	function normalizeSchematicCandidate(hit) {
+		if (!hit || !hit.candidate) {
+			return null;
+		}
+
+		if (hit.source === 'symbol') {
+			return {
+				libraryType: 'SYMBOL',
+				libraryUuid: hit.candidate.libraryUuid,
+				uuid: hit.candidate.uuid,
+			};
+		}
+
+		return {
+			libraryType: 'DEVICE',
+			libraryUuid: hit.candidate.libraryUuid,
+			uuid: hit.candidate.uuid,
+		};
+	}
+
 	async function searchLibraryByLcscId(lcscId) {
 		const text = String(lcscId || '').trim();
 		if (!text || !eda.lib_Device?.getByLcscIds) {
@@ -498,8 +518,11 @@
 			const hit = await searchLibraryByLcscId(lcscId);
 			if (!hit) continue;
 
+			const normalized = normalizeSchematicCandidate(hit);
+			appendLog(`正在放置 ${meta.designator || meta.value || 'Unknown'}，来源：${hit.source}，键：${lcscId}`, 'info');
+
 			const primitive = await eda.sch_PrimitiveComponent.create(
-				hit.candidate,
+				normalized,
 				x,
 				y,
 				undefined,
@@ -530,8 +553,11 @@
 			const hit = await searchLibraryCandidate(query);
 			if (!hit) continue;
 
+			const normalized = normalizeSchematicCandidate(hit);
+			appendLog(`正在放置 ${meta.designator || meta.value || 'Unknown'}，来源：${hit.source}，关键词：${query}`, 'info');
+
 			const primitive = await eda.sch_PrimitiveComponent.create(
-				hit.candidate,
+				normalized,
 				x,
 				y,
 				undefined,
