@@ -1,6 +1,7 @@
 (function () {
 	const STORAGE_KEYS = {
 		apiKey: 'edaAiCircuit.apiKey',
+		apiMode: 'edaAiCircuit.apiMode',
 		chatUrl: 'edaAiCircuit.chatUrl',
 		chatModel: 'edaAiCircuit.chatModel',
 		boardName: 'edaAiCircuit.boardName',
@@ -8,8 +9,12 @@
 		planJson: 'edaAiCircuit.planJson',
 	};
 
+	const PLAN_SYSTEM_PROMPT =
+		'你是电子电路设计助手。请把用户需求转换成严格 JSON，不要输出 markdown，不要解释。JSON schema: {"title":string,"summary":string,"blocks":[{"name":string,"x":number,"y":number,"width":number,"height":number}],"components":[{"ref":string,"name":string,"value":string,"searchKeywords":[string],"x":number,"y":number,"rotation":number,"addIntoPcb":boolean,"notes":string}],"wires":[{"net":string,"points":[[number,number],[number,number],[number,number]]}],"powerFlags":[{"identification":"Power"|"Ground"|"AnalogGround"|"ProtectGround","net":string,"x":number,"y":number,"rotation":number}],"textNotes":[{"content":string,"x":number,"y":number}],"nextPcbSuggestion":string}. 规则：1. 坐标单位按原理图常用网格整数输出即可。2. components 只输出基础常见器件，searchKeywords 用于库检索。3. wires 只输出主干基础连线。4. 如果需求不完整，也要给出可实现的最小方案。';
+
 	const elements = {
 		apiKey: document.getElementById('api-key'),
+		apiMode: document.getElementById('api-mode'),
 		chatUrl: document.getElementById('chat-url'),
 		chatModel: document.getElementById('chat-model'),
 		boardName: document.getElementById('board-name'),
@@ -58,14 +63,17 @@
 	}
 
 	function bindAutoSave(element, key) {
-		const eventName = element.tagName === 'TEXTAREA' ? 'input' : 'input';
-		element.addEventListener(eventName, () => {
+		element.addEventListener('input', () => {
+			writeConfig(key, element.value);
+		});
+		element.addEventListener('change', () => {
 			writeConfig(key, element.value);
 		});
 	}
 
 	function loadSettings() {
 		elements.apiKey.value = readConfig(STORAGE_KEYS.apiKey, '');
+		elements.apiMode.value = readConfig(STORAGE_KEYS.apiMode, 'auto');
 		elements.chatUrl.value = readConfig(STORAGE_KEYS.chatUrl, '');
 		elements.chatModel.value = readConfig(STORAGE_KEYS.chatModel, '');
 		elements.boardName.value = readConfig(STORAGE_KEYS.boardName, 'AI Board');
@@ -75,6 +83,7 @@
 
 	function bindAllAutosave() {
 		bindAutoSave(elements.apiKey, STORAGE_KEYS.apiKey);
+		bindAutoSave(elements.apiMode, STORAGE_KEYS.apiMode);
 		bindAutoSave(elements.chatUrl, STORAGE_KEYS.chatUrl);
 		bindAutoSave(elements.chatModel, STORAGE_KEYS.chatModel);
 		bindAutoSave(elements.boardName, STORAGE_KEYS.boardName);
@@ -94,7 +103,20 @@
 		};
 	}
 
-	async function ensureOkResponse(response) {
+	function detectApiMode(url) {
+		const manualMode = elements.apiMode.value;
+		if (manualMode && manualMode !== 'auto') {
+			return manualMode;
+		}
+
+		if (/\/responses(?:\?|$|\/)/i.test(url)) {
+			return 'responses';
+		}
+
+		return 'chat_completions';
+	}
+
+	async function ensureOkResponse(response, mode, url) {
 		if (response.ok) {
 			return;
 		}
@@ -103,13 +125,18 @@
 		let reason = bodyText || `HTTP ${response.status}`;
 		try {
 			const bodyJson = JSON.parse(bodyText);
-			reason = bodyJson.error?.message || bodyJson.message || reason;
+			reason = bodyJson.error?.message || bodyJson.message || JSON.stringify(bodyJson).slice(0, 400) || reason;
 		}
 		catch (error) {
 			console.warn('Response is not JSON:', error);
+			reason = String(reason).slice(0, 400);
 		}
 
-		throw new Error(`请求失败：HTTP ${response.status} ${reason}`);
+		if (response.status >= 500) {
+			throw new Error(`请求失败：HTTP ${response.status} ${reason}。当前接口模式：${mode}。如果你用的是第三方服务，也可能是上游暂时不可用。URL：${url}`);
+		}
+
+		throw new Error(`请求失败：HTTP ${response.status} ${reason}。当前接口模式：${mode}。URL：${url}`);
 	}
 
 	function stripCodeFences(text) {
@@ -131,6 +158,35 @@
 		}
 	}
 
+	function extractResponsesText(payload) {
+		if (typeof payload?.output_text === 'string' && payload.output_text.trim()) {
+			return payload.output_text;
+		}
+
+		if (Array.isArray(payload?.output)) {
+			const texts = [];
+			for (const item of payload.output) {
+				if (!Array.isArray(item?.content)) {
+					continue;
+				}
+				for (const content of item.content) {
+					if (content?.type === 'output_text' && typeof content.text === 'string') {
+						texts.push(content.text);
+					}
+				}
+			}
+			if (texts.length > 0) {
+				return texts.join('\n');
+			}
+		}
+
+		if (payload?.content?.[0]?.text) {
+			return payload.content[0].text;
+		}
+
+		throw new Error('Responses 接口返回成功，但没有找到可解析的文本输出。');
+	}
+
 	async function requestChatCompletion(messages) {
 		const chatUrl = elements.chatUrl.value.trim();
 		const chatModel = elements.chatModel.value.trim();
@@ -139,22 +195,43 @@
 			throw new Error('请先填写聊天模型 API URL 和模型名称。');
 		}
 
-		const response = await eda.sys_ClientUrl.request(
-			chatUrl,
-			'POST',
-			JSON.stringify({
+		const mode = detectApiMode(chatUrl);
+		appendLog(`正在调用 ${mode === 'responses' ? 'Responses' : 'Chat Completions'} 接口...`, 'info');
+
+		let requestBody;
+		if (mode === 'responses') {
+			const systemMessage = messages.find((message) => message.role === 'system')?.content || '';
+			const userMessage = messages.filter((message) => message.role !== 'system').map((message) => message.content).join('\n\n');
+			requestBody = {
+				model: chatModel,
+				instructions: String(systemMessage),
+				input: String(userMessage),
+				text: {
+					format: {
+						type: 'text',
+					},
+				},
+			};
+		}
+		else {
+			requestBody = {
 				model: chatModel,
 				temperature: 0.2,
 				messages,
-			}),
-			{ headers: getAuthHeaders() },
-		);
+			};
+		}
 
-		await ensureOkResponse(response);
+		const response = await eda.sys_ClientUrl.request(chatUrl, 'POST', JSON.stringify(requestBody), { headers: getAuthHeaders() });
+		await ensureOkResponse(response, mode, chatUrl);
+
 		const payload = await response.json();
+		if (mode === 'responses') {
+			return extractResponsesText(payload);
+		}
+
 		const content = payload?.choices?.[0]?.message?.content;
 		if (!content) {
-			throw new Error('聊天模型没有返回可用内容。');
+			throw new Error('Chat Completions 接口没有返回可用内容。');
 		}
 
 		return typeof content === 'string' ? content : JSON.stringify(content);
@@ -170,8 +247,7 @@
 		const result = await requestChatCompletion([
 			{
 				role: 'system',
-				content:
-					'你是电子电路设计助手。请把用户需求转换成严格 JSON，不要输出 markdown，不要解释。JSON schema: {"title":string,"summary":string,"blocks":[{"name":string,"x":number,"y":number,"width":number,"height":number}],"components":[{"ref":string,"name":string,"value":string,"searchKeywords":[string],"x":number,"y":number,"rotation":number,"addIntoPcb":boolean,"notes":string}],"wires":[{"net":string,"points":[[number,number],[number,number],[number,number]]}],"powerFlags":[{"identification":"Power"|"Ground"|"AnalogGround"|"ProtectGround","net":string,"x":number,"y":number,"rotation":number}],"textNotes":[{"content":string,"x":number,"y":number}],"nextPcbSuggestion":string}. 规则：1. 坐标单位按原理图常用网格整数输出即可。2. components 只输出基础常见器件，searchKeywords 用于库检索。3. wires 只输出主干基础连线。4. 如果需求不完整，也要给出可实现的最小方案。',
+				content: PLAN_SYSTEM_PROMPT,
 			},
 			{
 				role: 'user',
@@ -208,7 +284,7 @@
 				null,
 				null,
 			);
-			await eda.sch_PrimitiveText.create(String(block.name || 'Block'), Number(block.x || 0) + 4, Number(block.y || 0) - 8);
+			await eda.sch_PrimitiveText.create(Number(block.x || 0) + 4, Number(block.y || 0) - 8, String(block.name || 'Block'));
 		}
 	}
 
@@ -218,7 +294,7 @@
 		}
 
 		for (const note of plan.textNotes) {
-			await eda.sch_PrimitiveText.create(String(note.content || ''), Number(note.x || 0), Number(note.y || 0));
+			await eda.sch_PrimitiveText.create(Number(note.x || 0), Number(note.y || 0), String(note.content || ''));
 		}
 	}
 
@@ -338,8 +414,8 @@
 		await eda.dmt_EditorControl.openDocument(pageUuid);
 
 		if (eda.sch_PrimitiveText) {
-			await eda.sch_PrimitiveText.create(String(plan.title || boardName), 10, 10);
-			await eda.sch_PrimitiveText.create(String(plan.summary || ''), 10, 24);
+			await eda.sch_PrimitiveText.create(10, 10, String(plan.title || boardName));
+			await eda.sch_PrimitiveText.create(10, 24, String(plan.summary || ''));
 		}
 
 		await createBlockFrames(plan);

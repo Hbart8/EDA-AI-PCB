@@ -115,12 +115,14 @@ body {
 
 input,
 textarea,
+select,
 button {
 	font: inherit;
 }
 
 input,
-textarea {
+textarea,
+select {
 	width: 100%;
 	border: 1px solid rgba(24, 48, 40, 0.14);
 	background: var(--panel-strong);
@@ -132,7 +134,8 @@ textarea {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
 	border-color: rgba(25, 121, 93, 0.6);
 	box-shadow: 0 0 0 4px rgba(25, 121, 93, 0.12);
 }
@@ -166,7 +169,7 @@ button:disabled {
 
 .code-area {
 	font-family: "Cascadia Code", "Consolas", monospace;
-	min-height: 320px;
+	min-height: 220px;
 }
 
 .flat-list {

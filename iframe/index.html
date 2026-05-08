@@ -12,14 +12,14 @@
 				<div>
 					<p class="eyebrow">AI Circuit Designer</p>
 					<h1>EDA AI Circuit</h1>
-					<p class="subtitle">让 AI 按你的需求先生成可落地的原理图方案，再自动在嘉立创 EDA 里创建一个基础原理图骨架。</p>
+					<p class="subtitle">让 AI 先生成可落地的原理图方案，再自动在嘉立创 EDA 里创建一个基础原理图骨架。</p>
 				</div>
 			</header>
 
 			<section class="panel">
 				<div class="panel-title-row">
 					<h2>接口配置</h2>
-					<span class="hint">当前 MVP 主要依赖聊天模型，把自然语言需求转成结构化电路方案 JSON。</span>
+					<span class="hint">支持 OpenAI 兼容接口。默认会根据 URL 自动判断是 `chat/completions` 还是 `responses`。</span>
 				</div>
 				<div class="grid two-col">
 					<label class="field">
@@ -27,12 +27,20 @@
 						<input id="api-key" type="password" placeholder="sk-..." />
 					</label>
 					<label class="field">
+						<span>接口模式</span>
+						<select id="api-mode">
+							<option value="auto">自动判断（推荐）</option>
+							<option value="chat_completions">Chat Completions</option>
+							<option value="responses">Responses</option>
+						</select>
+					</label>
+					<label class="field">
 						<span>聊天模型 API URL</span>
-						<input id="chat-url" type="text" placeholder="例如 https://api.openai.com/v1/chat/completions" />
+						<input id="chat-url" type="text" placeholder="例如 https://api.openai.com/v1/chat/completions 或 /v1/responses" />
 					</label>
 					<label class="field">
 						<span>聊天模型名称</span>
-						<input id="chat-model" type="text" placeholder="例如 gpt-4.1-mini" />
+						<input id="chat-model" type="text" placeholder="例如 gpt-4.1-mini 或 gpt-5.2" />
 					</label>
 					<label class="field">
 						<span>新建板子名称</span>
@@ -62,16 +70,8 @@
 
 			<section class="panel">
 				<div class="panel-title-row">
-					<h2>AI 方案</h2>
-					<span class="hint">你可以先检查 AI 输出的 JSON，再决定是否落到原理图。</span>
-				</div>
-				<textarea id="plan-json" rows="18" class="code-area" placeholder="这里会显示 AI 返回的结构化电路方案 JSON"></textarea>
-			</section>
-
-			<section class="panel">
-				<div class="panel-title-row">
 					<h2>当前策略</h2>
-					<span class="hint">第一版只做高成功率动作，尽量避免一上来就做完整自动布线。</span>
+					<span class="hint">第一版先做高成功率动作，尽量避免一上来就做完整自动布线。</span>
 				</div>
 				<ul class="flat-list">
 					<li>支持新建原理图和关联板子</li>
@@ -84,9 +84,17 @@
 			<section class="panel">
 				<div class="panel-title-row">
 					<h2>状态</h2>
-					<span class="hint">这里会显示生成、建图和错误信息。</span>
+					<span class="hint">这里会显示生成、建图和错误信息。若报 `500/503`，优先检查接口模式和上游服务状态。</span>
 				</div>
 				<div id="status-log" class="status-log"></div>
+			</section>
+
+			<section class="panel">
+				<div class="panel-title-row">
+					<h2>AI 方案 JSON</h2>
+					<span class="hint">这里显示 AI 返回的结构化电路方案。现在放在后面，避免首次打开时被大空白区遮住主要操作。</span>
+				</div>
+				<textarea id="plan-json" rows="12" class="code-area" placeholder="这里会显示 AI 返回的结构化电路方案 JSON"></textarea>
 			</section>
 		</div>
 
