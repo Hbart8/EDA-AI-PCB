@@ -473,7 +473,58 @@
 		return null;
 	}
 
+	async function searchLibraryByLcscId(lcscId) {
+		const text = String(lcscId || '').trim();
+		if (!text || !eda.lib_Device?.getByLcscIds) {
+			return null;
+		}
+
+		try {
+			const result = await eda.lib_Device.getByLcscIds(text);
+			if (Array.isArray(result) && result.length > 0) {
+				return { source: 'lcsc', candidate: result[0], query: text };
+			}
+		}
+		catch (error) {
+			console.warn('lcsc search failed:', text, error);
+		}
+
+		return null;
+	}
+
 	async function placeSchematicComponent(component, x, y, rotation, meta = {}) {
+		const lcscIds = Array.isArray(meta.lcscIds) ? meta.lcscIds : [];
+		for (const lcscId of lcscIds) {
+			const hit = await searchLibraryByLcscId(lcscId);
+			if (!hit) continue;
+
+			const primitive = await eda.sch_PrimitiveComponent.create(
+				hit.candidate,
+				x,
+				y,
+				undefined,
+				rotation,
+				false,
+				meta.addIntoBom ?? true,
+				meta.addIntoPcb ?? true,
+			);
+
+			if (!primitive) continue;
+
+			if (meta.designator && primitive.setState_Designator) {
+				primitive.setState_Designator(meta.designator);
+			}
+			if (meta.value && primitive.setState_Name) {
+				primitive.setState_Name(meta.value);
+			}
+			if (primitive.done) {
+				await primitive.done();
+			}
+
+			appendLog(`器件 ${meta.designator || meta.value || 'Unknown'} 已按 LCSC 料号命中：${lcscId}`, 'info');
+			return { primitive, ...hit };
+		}
+
 		const queries = buildSearchQueries(component);
 		for (const query of queries) {
 			const hit = await searchLibraryCandidate(query);
@@ -593,22 +644,27 @@
 		const ldo = await placeSchematicComponent({ searchKeywords: ['AMS1117-3.3', 'AMS1117', 'LDO', 'Voltage Regulator'] }, 120, 90, 0, {
 			designator: 'U1',
 			value: 'AMS1117-3.3',
+			lcscIds: ['C6186'],
 		});
 		const cin = await placeSchematicComponent({ searchKeywords: ['10uF Capacitor', 'Capacitor', 'C'] }, 78, 46, 0, {
 			designator: 'C1',
 			value: '10uF',
+			lcscIds: ['C15850', 'C19702', 'C1713'],
 		});
 		const cout = await placeSchematicComponent({ searchKeywords: ['10uF Capacitor', 'Capacitor', 'C'] }, 198, 46, 0, {
 			designator: 'C2',
 			value: '10uF',
+			lcscIds: ['C15850', 'C19702', 'C1713'],
 		});
 		const rled = await placeSchematicComponent({ searchKeywords: ['1k Resistor', 'Resistor', 'R'] }, 194, 138, 0, {
 			designator: 'R1',
 			value: '1k',
+			lcscIds: ['C21190', 'C17513', 'C11702'],
 		});
 		const led = await placeSchematicComponent({ searchKeywords: ['LED', 'Light Emitting Diode'] }, 260, 138, 0, {
 			designator: 'D1',
 			value: 'LED',
+			lcscIds: ['C72043', 'C2286', 'C84256'],
 		});
 
 		if (!ldo || !cin || !cout || !rled || !led || !vinPort || !voutPort || !gndFlag) {
