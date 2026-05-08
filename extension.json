@@ -1,0 +1,87 @@
+{
+	"name": "eda-ai-circuit",
+	"uuid": "560d62e6717b4231b48f0d29e4faa9b6",
+	"displayName": "EDA AI Circuit",
+	"description": "在嘉立创 EDA 专业版中，通过自然语言生成电路方案、自动新建原理图并放置基础器件和连线。",
+	"version": "0.1.0",
+	"publisher": "huang",
+	"engines": {
+		"eda": "^3.0.0"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "extension-store",
+		"url": ""
+	},
+	"categories": "Other",
+	"keywords": [
+		"AI",
+		"Schematic",
+		"PCB",
+		"JLCEDA"
+	],
+	"images": {
+		"logo": "./images/logo.png"
+	},
+	"homepage": "",
+	"bugs": "",
+	"activationEvents": {},
+	"entry": "./dist/index",
+	"dependentExtensions": {},
+	"headerMenus": {
+		"home": [
+			{
+				"id": "eda-ai-circuit",
+				"title": "EDA AI Circuit",
+				"menuItems": [
+					{
+						"id": "open-eda-ai-circuit-home",
+						"title": "打开助手",
+						"registerFn": "openStudio"
+					},
+					{
+						"id": "about-eda-ai-circuit-home",
+						"title": "关于...",
+						"registerFn": "about"
+					}
+				]
+			}
+		],
+		"sch": [
+			{
+				"id": "eda-ai-circuit",
+				"title": "EDA AI Circuit",
+				"menuItems": [
+					{
+						"id": "open-eda-ai-circuit-sch",
+						"title": "打开助手",
+						"registerFn": "openStudio"
+					},
+					{
+						"id": "about-eda-ai-circuit-sch",
+						"title": "关于...",
+						"registerFn": "about"
+					}
+				]
+			}
+		],
+		"pcb": [
+			{
+				"id": "eda-ai-circuit",
+				"title": "EDA AI Circuit",
+				"menuItems": [
+					{
+						"id": "open-eda-ai-circuit-pcb",
+						"title": "打开助手",
+						"registerFn": "openStudio"
+					},
+					{
+						"id": "about-eda-ai-circuit-pcb",
+						"title": "关于...",
+						"registerFn": "about"
+					}
+				]
+			}
+		]
+	}
+}

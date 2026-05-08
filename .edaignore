@@ -1,0 +1,10 @@
+/.git/
+/node_modules/
+/src/
+/config/
+/build/
+/.gitignore
+/package-lock.json
+/package.json
+/tsconfig.json
+debug.log
