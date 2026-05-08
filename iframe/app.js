@@ -116,6 +116,23 @@
 		return 'chat_completions';
 	}
 
+	function normalizeApiUrl(rawUrl, mode) {
+		const url = String(rawUrl || '').trim().replace(/\/+$/, '');
+		if (!url) {
+			return url;
+		}
+
+		if (/\/chat\/completions$/i.test(url) || /\/responses$/i.test(url)) {
+			return url;
+		}
+
+		if (/\/v1$/i.test(url)) {
+			return `${url}/${mode === 'responses' ? 'responses' : 'chat/completions'}`;
+		}
+
+		return url;
+	}
+
 	function isHtmlResponse(text) {
 		if (typeof text !== 'string') {
 			return false;
@@ -220,14 +237,23 @@
 	}
 
 	async function requestChatCompletion(messages) {
-		const chatUrl = elements.chatUrl.value.trim();
+		const rawChatUrl = elements.chatUrl.value.trim();
 		const chatModel = elements.chatModel.value.trim();
 
-		if (!chatUrl || !chatModel) {
+		if (!rawChatUrl || !chatModel) {
 			throw new Error('请先填写聊天模型 API URL 和模型名称。');
 		}
 
-		const mode = detectApiMode(chatUrl);
+		let mode = detectApiMode(rawChatUrl);
+		if (mode === 'chat_completions' && elements.apiMode.value === 'auto' && /\/v1$/i.test(rawChatUrl)) {
+			mode = 'responses';
+		}
+
+		const chatUrl = normalizeApiUrl(rawChatUrl, mode);
+		if (chatUrl !== rawChatUrl) {
+			appendLog(`已自动补全接口地址：${chatUrl}`, 'info');
+		}
+
 		appendLog(`正在调用 ${mode === 'responses' ? 'Responses' : 'Chat Completions'} 接口...`, 'info');
 
 		let requestBody;

@@ -36,7 +36,7 @@
 					</label>
 					<label class="field">
 						<span>聊天模型 API URL</span>
-						<input id="chat-url" type="text" placeholder="例如 https://api.openai.com/v1/chat/completions 或 /v1/responses" />
+						<input id="chat-url" type="text" placeholder="例如 https://api.openai.com/v1/chat/completions、/v1/responses，或只填到 /v1" />
 					</label>
 					<label class="field">
 						<span>聊天模型名称</span>
@@ -84,7 +84,7 @@
 			<section class="panel">
 				<div class="panel-title-row">
 					<h2>状态</h2>
-					<span class="hint">这里会显示生成、建图和错误信息。若报 `500/503`，优先检查接口模式和上游服务状态。</span>
+					<span class="hint">这里会显示生成、建图和错误信息。若只填到 `/v1`，扩展会自动补全端点；若报 `500/503`，优先检查上游服务状态。</span>
 				</div>
 				<div id="status-log" class="status-log"></div>
 			</section>
