@@ -143,7 +143,7 @@
 	}
 
 	function buildHtmlResponseHint(url, mode) {
-		return `接口返回的是 HTML 页面，不是 JSON。通常说明你现在填写的 URL 不是实际 API 端点，而是网页、网关错误页、登录页或服务商首页。当前模式：${mode}。请确认 URL 结尾是否真的是 /v1/chat/completions 或 /v1/responses。URL：${url}`;
+		return `接口返回的是 HTML 页面，不是 JSON。当前模式：${mode}。这通常说明请求没有正确进入 API 返回链路，而是被网关、登录页或错误页接管了。URL：${url}`;
 	}
 
 	async function ensureOkResponse(response, mode, url) {
@@ -153,25 +153,22 @@
 
 		const bodyText = await response.text();
 		let reason = bodyText || `HTTP ${response.status}`;
+
 		if (isHtmlResponse(bodyText)) {
 			reason = buildHtmlResponseHint(url, mode);
 		}
-		try {
-			const bodyJson = JSON.parse(bodyText);
-			reason = bodyJson.error?.message || bodyJson.message || JSON.stringify(bodyJson).slice(0, 400) || reason;
-		}
-		catch (error) {
-			console.warn('Response is not JSON:', error);
-			if (!isHtmlResponse(bodyText)) {
+		else {
+			try {
+				const bodyJson = JSON.parse(bodyText);
+				reason = bodyJson.error?.message || bodyJson.message || JSON.stringify(bodyJson).slice(0, 400) || reason;
+			}
+			catch (error) {
+				console.warn('Response is not JSON:', error);
 				reason = String(reason).slice(0, 400);
 			}
 		}
 
-		if (response.status >= 500) {
-			throw new Error(`请求失败：HTTP ${response.status} ${reason}。当前接口模式：${mode}。如果你用的是第三方服务，也可能是上游暂时不可用。URL：${url}`);
-		}
-
-		throw new Error(`请求失败：HTTP ${response.status} ${reason}。当前接口模式：${mode}。URL：${url}`);
+		throw new Error(`请求失败：HTTP ${response.status} ${reason}`);
 	}
 
 	async function parseJsonResponse(response, mode, url) {
@@ -320,11 +317,7 @@
 	}
 
 	async function createBlockFrames(plan) {
-		if (!Array.isArray(plan.blocks)) {
-			return;
-		}
-
-		if (!eda.sch_PrimitiveRectangle || !eda.sch_PrimitiveText) {
+		if (!Array.isArray(plan.blocks) || !eda.sch_PrimitiveRectangle || !eda.sch_PrimitiveText) {
 			return;
 		}
 
@@ -442,6 +435,47 @@
 		}
 	}
 
+	async function resolveTargetSchematicPage(boardName) {
+		try {
+			const schematicUuid = await eda.dmt_Schematic.createSchematic(boardName);
+			if (schematicUuid) {
+				const pageUuid = await eda.dmt_Schematic.createSchematicPage(schematicUuid);
+				if (pageUuid) {
+					try {
+						await eda.dmt_Board.createBoard(schematicUuid);
+					}
+					catch (error) {
+						console.warn('createBoard failed:', error);
+						appendLog('关联板子创建失败，先继续生成原理图。', 'error');
+					}
+
+					await eda.dmt_EditorControl.openDocument(pageUuid);
+					appendLog('已新建原理图和关联板子。', 'success');
+					return { pageUuid, createdNewSchematic: true };
+				}
+			}
+		}
+		catch (error) {
+			console.warn('create schematic flow failed:', error);
+		}
+
+		appendLog('新建原理图失败，正在回退到当前已打开的原理图页。', 'error');
+		const currentPageInfo = await eda.dmt_Schematic.getCurrentSchematicPageInfo();
+		if (currentPageInfo?.uuid) {
+			try {
+				await eda.dmt_EditorControl.openDocument(currentPageInfo.uuid);
+			}
+			catch (error) {
+				console.warn('open current schematic page failed:', error);
+			}
+
+			appendLog('已切换到当前原理图页，后续内容将生成到这里。', 'info');
+			return { pageUuid: currentPageInfo.uuid, createdNewSchematic: false };
+		}
+
+		throw new Error('新建原理图失败，并且当前没有可用的原理图页。请先手动打开一个原理图页再试。');
+	}
+
 	async function buildSchematic() {
 		if (!elements.planJson.value.trim()) {
 			throw new Error('请先生成电路方案。');
@@ -451,25 +485,7 @@
 		const boardName = elements.boardName.value.trim() || 'AI Board';
 
 		appendLog('正在新建原理图和关联板子...', 'info');
-
-		const schematicUuid = await eda.dmt_Schematic.createSchematic(boardName);
-		if (!schematicUuid) {
-			throw new Error('新建原理图失败。');
-		}
-
-		const pageUuid = await eda.dmt_Schematic.createSchematicPage(schematicUuid);
-		if (!pageUuid) {
-			throw new Error('新建原理图页失败。');
-		}
-
-		try {
-			await eda.dmt_Board.createBoard(schematicUuid);
-		}
-		catch (error) {
-			console.warn('createBoard failed:', error);
-		}
-
-		await eda.dmt_EditorControl.openDocument(pageUuid);
+		const target = await resolveTargetSchematicPage(boardName);
 
 		if (eda.sch_PrimitiveText) {
 			await eda.sch_PrimitiveText.create(10, 10, String(plan.title || boardName));
@@ -486,7 +502,13 @@
 			await eda.sch_Document.save();
 		}
 
-		appendLog('基础原理图已创建完成。你现在可以在嘉立创里继续微调，然后再转 PCB。', 'success');
+		appendLog(
+			target.createdNewSchematic
+				? '基础原理图已创建完成。你现在可以在嘉立创里继续微调，然后再转 PCB。'
+				: '内容已生成到当前原理图页。你现在可以在嘉立创里继续微调，然后再转 PCB。',
+			'success',
+		);
+
 		if (plan.nextPcbSuggestion) {
 			appendLog(`PCB 下一步建议：${plan.nextPcbSuggestion}`, 'info');
 		}

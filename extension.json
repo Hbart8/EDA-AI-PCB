@@ -3,7 +3,7 @@
 	"uuid": "560d62e6717b4231b48f0d29e4faa9b6",
 	"displayName": "EDA AI Circuit",
 	"description": "在嘉立创 EDA 专业版中，通过自然语言生成电路方案、自动新建原理图并放置基础器件和连线，兼容 chat/completions 与 responses 风格接口。",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"publisher": "huang",
 	"engines": {
 		"eda": "^3.0.0"

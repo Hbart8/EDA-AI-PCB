@@ -1,6 +1,6 @@
 {
 	"name": "eda-ai-circuit",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"description": "JLCEDA Pro extension for AI-assisted schematic generation.",
 	"author": "huang",
 	"license": "MIT",
