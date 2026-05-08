@@ -10,7 +10,7 @@
 	};
 
 	const PLAN_SYSTEM_PROMPT =
-		'你是电子电路设计助手。请把用户需求转换成严格 JSON，不要输出 markdown，不要解释。JSON schema: {"title":string,"summary":string,"blocks":[{"name":string,"x":number,"y":number,"width":number,"height":number}],"components":[{"ref":string,"name":string,"value":string,"searchKeywords":[string],"x":number,"y":number,"rotation":number,"addIntoPcb":boolean,"notes":string}],"wires":[{"net":string,"points":[[number,number],[number,number],[number,number]]}],"powerFlags":[{"identification":"Power"|"Ground"|"AnalogGround"|"ProtectGround","net":string,"x":number,"y":number,"rotation":number}],"textNotes":[{"content":string,"x":number,"y":number}],"nextPcbSuggestion":string}. 规则：1. 坐标单位按原理图常用网格整数输出即可。2. components 只输出基础常见器件，searchKeywords 用于库检索。3. wires 只输出主干基础连线。4. 如果需求不完整，也要给出可实现的最小方案。';
+		'你是电子电路设计助手。请把用户需求转换成严格 JSON，不要输出 markdown，不要解释。JSON schema: {"title":string,"summary":string,"blocks":[{"name":string,"x":number,"y":number,"width":number,"height":number}],"components":[{"ref":string,"name":string,"value":string,"searchKeywords":[string],"x":number,"y":number,"rotation":number,"addIntoPcb":boolean,"notes":string}],"wires":[{"net":string,"points":[[number,number],[number,number],[number,number]]}],"powerFlags":[{"identification":"Power"|"Ground"|"AnalogGround"|"ProtectGround","net":string,"x":number,"y":number,"rotation":number}],"textNotes":[{"content":string,"x":number,"y":number}],"nextPcbSuggestion":string}. 坐标用原理图网格整数输出；components 只输出基础常见器件；如果需求不完整，也要给出可实现的最小方案。';
 
 	const elements = {
 		apiKey: document.getElementById('api-key'),
@@ -63,12 +63,8 @@
 	}
 
 	function bindAutoSave(element, key) {
-		element.addEventListener('input', () => {
-			writeConfig(key, element.value);
-		});
-		element.addEventListener('change', () => {
-			writeConfig(key, element.value);
-		});
+		element.addEventListener('input', () => writeConfig(key, element.value));
+		element.addEventListener('change', () => writeConfig(key, element.value));
 	}
 
 	function loadSettings() {
@@ -137,13 +133,12 @@
 		if (typeof text !== 'string') {
 			return false;
 		}
-
 		const trimmed = text.trim().toLowerCase();
 		return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') || trimmed.startsWith('<head') || trimmed.startsWith('<body');
 	}
 
 	function buildHtmlResponseHint(url, mode) {
-		return `接口返回的是 HTML 页面，不是 JSON。当前模式：${mode}。这通常说明请求没有正确进入 API 返回链路，而是被网关、登录页或错误页接管了。URL：${url}`;
+		return `接口返回的是 HTML 页面，不是 JSON。当前模式：${mode}。URL：${url}`;
 	}
 
 	async function ensureOkResponse(response, mode, url) {
@@ -300,14 +295,8 @@
 
 		appendLog('正在让 AI 生成电路方案...', 'info');
 		const result = await requestChatCompletion([
-			{
-				role: 'system',
-				content: PLAN_SYSTEM_PROMPT,
-			},
-			{
-				role: 'user',
-				content: requestText,
-			},
+			{ role: 'system', content: PLAN_SYSTEM_PROMPT },
+			{ role: 'user', content: requestText },
 		]);
 
 		const plan = parsePlanJson(result);
@@ -316,69 +305,82 @@
 		appendLog('电路方案已生成。请先检查 JSON，再点“创建基础原理图”。', 'success');
 	}
 
-	async function createBlockFrames(plan) {
-		if (!Array.isArray(plan.blocks) || !eda.sch_PrimitiveRectangle || !eda.sch_PrimitiveText) {
-			return;
-		}
-
-		for (const block of plan.blocks) {
-			await eda.sch_PrimitiveRectangle.create(
-				Number(block.x || 0),
-				Number(block.y || 0),
-				Number(block.width || 200),
-				Number(block.height || 120),
-				0,
-				0,
-				'#7CA393',
-				null,
-				1,
-				null,
-				null,
-			);
-			await eda.sch_PrimitiveText.create(Number(block.x || 0) + 4, Number(block.y || 0) - 8, String(block.name || 'Block'));
-		}
+	function pinPoint(pin) {
+		return {
+			x: Number(pin?.getState_X?.() ?? 0),
+			y: Number(pin?.getState_Y?.() ?? 0),
+			name: String(pin?.getState_PinName?.() ?? ''),
+			number: String(pin?.getState_PinNumber?.() ?? ''),
+		};
 	}
 
-	async function createNotes(plan) {
-		if (!Array.isArray(plan.textNotes) || !eda.sch_PrimitiveText) {
-			return;
-		}
-
-		for (const note of plan.textNotes) {
-			await eda.sch_PrimitiveText.create(Number(note.x || 0), Number(note.y || 0), String(note.content || ''));
-		}
+	function pinLabel(pin) {
+		return `${pin.name} ${pin.number}`.toUpperCase();
 	}
 
-	async function createPowerFlags(plan) {
-		if (!Array.isArray(plan.powerFlags) || !eda.sch_PrimitiveComponent?.createNetFlag) {
-			return;
-		}
-
-		for (const flag of plan.powerFlags) {
-			await eda.sch_PrimitiveComponent.createNetFlag(
-				flag.identification || 'Power',
-				String(flag.net || ''),
-				Number(flag.x || 0),
-				Number(flag.y || 0),
-				Number(flag.rotation || 0),
-				false,
-			);
-		}
+	function sortPinsLeftRight(pins) {
+		return [...pins].sort((a, b) => a.x - b.x || a.y - b.y);
 	}
 
-	async function createWires(plan) {
-		if (!Array.isArray(plan.wires) || !eda.sch_PrimitiveWire) {
-			return;
+	function pickPinByRegex(pins, regexes) {
+		return pins.find((pin) => regexes.some((regex) => regex.test(pinLabel(pin))));
+	}
+
+	function chooseLdoPins(pins) {
+		if (pins.length === 0) {
+			return {};
 		}
 
-		for (const wire of plan.wires) {
-			if (!Array.isArray(wire.points) || wire.points.length < 2) {
-				continue;
-			}
+		const input = pickPinByRegex(pins, [/VIN/i, /\bIN\b/i, /VCC/i]);
+		const output = pickPinByRegex(pins, [/VOUT/i, /\bOUT\b/i, /VO\b/i]);
+		const ground = pickPinByRegex(pins, [/GND/i, /GROUND/i, /ADJ/i]);
+		const sorted = sortPinsLeftRight(pins);
 
-			const line = wire.points.map((point) => [Number(point[0] || 0), Number(point[1] || 0)]);
-			await eda.sch_PrimitiveWire.create(line, wire.net ? String(wire.net) : undefined, null, null, null);
+		return {
+			input: input || sorted[0],
+			output: output || sorted[sorted.length - 1],
+			ground: ground || sorted[1] || sorted[0],
+		};
+	}
+
+	function chooseTwoPins(pins) {
+		const sorted = sortPinsLeftRight(pins);
+		return {
+			a: sorted[0],
+			b: sorted[sorted.length - 1],
+		};
+	}
+
+	function orthogonalRoute(a, b) {
+		const x1 = Math.round(a.x);
+		const y1 = Math.round(a.y);
+		const x2 = Math.round(b.x);
+		const y2 = Math.round(b.y);
+
+		if (Math.abs(x1 - x2) < 2 || Math.abs(y1 - y2) < 2) {
+			return [x1, y1, x2, y2];
 		}
+
+		const midX = Math.round((x1 + x2) / 2);
+		return [x1, y1, midX, y1, midX, y2, x2, y2];
+	}
+
+	async function connectPins(net, a, b) {
+		if (!a || !b) {
+			return false;
+		}
+
+		await eda.sch_PrimitiveWire.create(orthogonalRoute(a, b), net, null, null, null);
+		return true;
+	}
+
+	async function getPins(primitive) {
+		if (!primitive?.getAllPins) {
+			return [];
+		}
+
+		const pins = await primitive.getAllPins();
+		return Array.isArray(pins) ? pins.filter(Boolean).map(pinPoint) : [];
 	}
 
 	function buildSearchQueries(component) {
@@ -386,32 +388,17 @@
 		if (Array.isArray(component.searchKeywords)) {
 			raw.push(...component.searchKeywords);
 		}
-		if (component.name) {
-			raw.push(component.name);
-		}
-		if (component.value) {
-			raw.push(component.value);
-		}
-		if (component.ref) {
-			raw.push(component.ref);
-		}
+		if (component.name) raw.push(component.name);
+		if (component.value) raw.push(component.value);
+		if (component.ref) raw.push(component.ref);
 
 		const normalized = [];
 		const seen = new Set();
 		for (const item of raw) {
 			const text = String(item || '').trim();
-			if (!text) {
-				continue;
-			}
-			if (!seen.has(text)) {
-				seen.add(text);
-				normalized.push(text);
-			}
-
-			const upper = text.toUpperCase();
-			if ((upper.startsWith('R') || upper.startsWith('C') || upper.startsWith('D') || upper.startsWith('U')) && text.length <= 4) {
-				continue;
-			}
+			if (!text || seen.has(text)) continue;
+			seen.add(text);
+			normalized.push(text);
 
 			if (/AMS1117/i.test(text)) {
 				for (const extra of ['AMS1117-3.3', 'AMS1117', 'LDO']) {
@@ -453,105 +440,218 @@
 		return normalized;
 	}
 
-	function normalizeSymbolTypeResult(candidate) {
-		if (!candidate) {
+	async function searchLibraryCandidate(query) {
+		const text = String(query || '').trim();
+		if (!text) {
 			return null;
 		}
 
-		return {
-			libraryUuid: candidate.libraryUuid,
-			uuid: candidate.uuid,
-			libraryType: 'SYMBOL',
-			name: candidate.name,
-		};
-	}
-
-	async function searchPlaceableComponent(component) {
-		const queries = buildSearchQueries(component);
-
-		for (const query of queries) {
-			try {
-				const deviceResults = await eda.lib_Device.search(String(query), undefined, undefined, undefined, 10, 1);
-				if (deviceResults && deviceResults.length > 0) {
-					return {
-						source: 'device',
-						query,
-						candidate: deviceResults[0],
-					};
+		try {
+			if (eda.lib_Device?.search) {
+				const found = await eda.lib_Device.search(text, undefined, undefined, undefined, 10, 1);
+				if (found?.length) {
+					return { source: 'device', candidate: found[0], query: text };
 				}
 			}
-			catch (error) {
-				console.warn('device search failed:', query, error);
-			}
+		}
+		catch (error) {
+			console.warn('device search failed:', text, error);
+		}
 
-			try {
-				if (eda.lib_Symbol?.search) {
-					const symbolResults = await eda.lib_Symbol.search(String(query), undefined, undefined, undefined, 10, 1);
-					if (symbolResults && symbolResults.length > 0) {
-						return {
-							source: 'symbol',
-							query,
-							candidate: normalizeSymbolTypeResult(symbolResults[0]),
-						};
-					}
+		try {
+			if (eda.lib_Symbol?.search) {
+				const found = await eda.lib_Symbol.search(text, undefined, undefined, undefined, 10, 1);
+				if (found?.length) {
+					return { source: 'symbol', candidate: found[0], query: text };
 				}
 			}
-			catch (error) {
-				console.warn('symbol search failed:', query, error);
-			}
+		}
+		catch (error) {
+			console.warn('symbol search failed:', text, error);
 		}
 
 		return null;
 	}
 
-	async function searchAndPlaceComponents(plan) {
-		if (!Array.isArray(plan.components)) {
-			return;
-		}
-
-		if ((!eda.lib_Device && !eda.lib_Symbol) || !eda.sch_PrimitiveComponent?.create) {
-			throw new Error('当前环境不支持自动放置原理图器件。');
-		}
-
-		for (const component of plan.components) {
-			const match = await searchPlaceableComponent(component);
-			if (!match) {
-				const tried = buildSearchQueries(component).join(', ');
-				appendLog(`没有找到器件 ${component.ref || component.name || 'Unknown'}。尝试过的关键词：${tried}`, 'error');
-				continue;
-			}
+	async function placeSchematicComponent(component, x, y, rotation, meta = {}) {
+		const queries = buildSearchQueries(component);
+		for (const query of queries) {
+			const hit = await searchLibraryCandidate(query);
+			if (!hit) continue;
 
 			const primitive = await eda.sch_PrimitiveComponent.create(
-				match.candidate,
-				Number(component.x || 0),
-				Number(component.y || 0),
+				hit.candidate,
+				x,
+				y,
 				undefined,
-				Number(component.rotation || 0),
+				rotation,
 				false,
-				true,
-				component.addIntoPcb !== false,
+				meta.addIntoBom ?? true,
+				meta.addIntoPcb ?? true,
 			);
 
-			if (!primitive) {
-				appendLog(`器件放置失败：${component.ref || match.candidate.name}，匹配来源：${match.source}，关键词：${match.query}`, 'error');
-				continue;
-			}
+			if (!primitive) continue;
 
-			if (primitive.setState_Designator) {
-				primitive.setState_Designator(component.ref ? String(component.ref) : undefined);
+			if (meta.designator && primitive.setState_Designator) {
+				primitive.setState_Designator(meta.designator);
 			}
-			if (primitive.setState_Name) {
-				primitive.setState_Name(component.value ? String(component.value) : undefined);
+			if (meta.value && primitive.setState_Name) {
+				primitive.setState_Name(meta.value);
 			}
 			if (primitive.done) {
 				await primitive.done();
 			}
 
-			appendLog(
-				`已放置器件 ${component.ref || match.candidate.name}，匹配来源：${match.source}，关键词：${match.query}`,
-				'success',
+			return { primitive, ...hit };
+		}
+
+		return null;
+	}
+
+	async function createBlockFrames(plan) {
+		if (!Array.isArray(plan.blocks) || !eda.sch_PrimitiveRectangle || !eda.sch_PrimitiveText) return;
+		for (const block of plan.blocks) {
+			await eda.sch_PrimitiveRectangle.create(
+				Number(block.x || 0),
+				Number(block.y || 0),
+				Number(block.width || 200),
+				Number(block.height || 120),
+				0,
+				0,
+				'#7CA393',
+				null,
+				1,
+				null,
+				null,
+			);
+			await eda.sch_PrimitiveText.create(Number(block.x || 0) + 4, Number(block.y || 0) - 8, String(block.name || 'Block'));
+		}
+	}
+
+	async function createNotes(plan) {
+		if (!Array.isArray(plan.textNotes) || !eda.sch_PrimitiveText) return;
+		for (const note of plan.textNotes) {
+			await eda.sch_PrimitiveText.create(Number(note.x || 0), Number(note.y || 0), String(note.content || ''));
+		}
+	}
+
+	async function createPowerFlags(plan) {
+		if (!Array.isArray(plan.powerFlags) || !eda.sch_PrimitiveComponent?.createNetFlag) return;
+		for (const flag of plan.powerFlags) {
+			await eda.sch_PrimitiveComponent.createNetFlag(
+				flag.identification || 'Power',
+				String(flag.net || ''),
+				Number(flag.x || 0),
+				Number(flag.y || 0),
+				Number(flag.rotation || 0),
+				false,
 			);
 		}
+	}
+
+	async function createWires(plan) {
+		if (!Array.isArray(plan.wires) || !eda.sch_PrimitiveWire) return;
+		for (const wire of plan.wires) {
+			if (!Array.isArray(wire.points) || wire.points.length < 2) continue;
+			const line = wire.points.flatMap((point) => [Number(point[0] || 0), Number(point[1] || 0)]);
+			await eda.sch_PrimitiveWire.create(line, wire.net ? String(wire.net) : undefined, null, null, null);
+		}
+	}
+
+	async function placeNetPort(direction, net, x, y, rotation = 0) {
+		const primitive = await eda.sch_PrimitiveComponent.createNetPort(direction, net, x, y, rotation, false);
+		if (primitive?.done) await primitive.done();
+		return primitive;
+	}
+
+	async function placeGroundFlag(net, x, y, rotation = 0) {
+		const primitive = await eda.sch_PrimitiveComponent.createNetFlag('Ground', net, x, y, rotation, false);
+		if (primitive?.done) await primitive.done();
+		return primitive;
+	}
+
+	function inferTemplate(requestText, plan) {
+		const text = `${requestText || ''} ${plan?.title || ''} ${plan?.summary || ''}`.toLowerCase();
+		if (/ams1117|3\.3|3v3|稳压|ldo/.test(text)) {
+			return 'ldo_3v3';
+		}
+		return 'generic';
+	}
+
+	async function buildLdo33Template(plan) {
+		appendLog('正在生成 AMS1117-3.3 电源模板...', 'info');
+
+		if (eda.sch_PrimitiveText) {
+			await eda.sch_PrimitiveText.create(12, 12, String(plan.title || 'AMS1117-3.3 最小系统'));
+			await eda.sch_PrimitiveText.create(12, 24, String(plan.summary || '输入5V，输出3.3V，包含输入/输出电容和电源指示LED'));
+		}
+
+		const vinPort = await placeNetPort('IN', 'VIN_5V', 24, 72, 0);
+		const voutPort = await placeNetPort('OUT', 'VOUT_3V3', 260, 72, 0);
+		const gndFlag = await placeGroundFlag('GND', 170, 182, 0);
+
+		const ldo = await placeSchematicComponent({ searchKeywords: ['AMS1117-3.3', 'AMS1117', 'LDO', 'Voltage Regulator'] }, 120, 90, 0, {
+			designator: 'U1',
+			value: 'AMS1117-3.3',
+		});
+		const cin = await placeSchematicComponent({ searchKeywords: ['10uF Capacitor', 'Capacitor', 'C'] }, 78, 46, 0, {
+			designator: 'C1',
+			value: '10uF',
+		});
+		const cout = await placeSchematicComponent({ searchKeywords: ['10uF Capacitor', 'Capacitor', 'C'] }, 198, 46, 0, {
+			designator: 'C2',
+			value: '10uF',
+		});
+		const rled = await placeSchematicComponent({ searchKeywords: ['1k Resistor', 'Resistor', 'R'] }, 194, 138, 0, {
+			designator: 'R1',
+			value: '1k',
+		});
+		const led = await placeSchematicComponent({ searchKeywords: ['LED', 'Light Emitting Diode'] }, 260, 138, 0, {
+			designator: 'D1',
+			value: 'LED',
+		});
+
+		if (!ldo || !cin || !cout || !rled || !led || !vinPort || !voutPort || !gndFlag) {
+			throw new Error('模板器件放置失败。请检查库中是否能检索到 AMS1117、电容、电阻和 LED。');
+		}
+
+		const ldoPins = chooseLdoPins(await getPins(ldo.primitive));
+		const cinPins = chooseTwoPins(await getPins(cin.primitive));
+		const coutPins = chooseTwoPins(await getPins(cout.primitive));
+		const rPins = chooseTwoPins(await getPins(rled.primitive));
+		const ledPins = chooseTwoPins(await getPins(led.primitive));
+		const vinPins = await getPins(vinPort);
+		const voutPins = await getPins(voutPort);
+		const gndPins = await getPins(gndFlag);
+
+		if (!ldoPins.input || !ldoPins.output || !ldoPins.ground) {
+			throw new Error('AMS1117 器件引脚识别失败。');
+		}
+
+		await connectPins('VIN_5V', vinPins[0], ldoPins.input);
+		await connectPins('VIN_5V', vinPins[0], cinPins.a);
+		await connectPins('GND', cinPins.b, gndPins[0]);
+		await connectPins('VOUT_3V3', ldoPins.output, voutPins[0]);
+		await connectPins('VOUT_3V3', ldoPins.output, coutPins.a);
+		await connectPins('GND', coutPins.b, gndPins[0]);
+		await connectPins('VOUT_3V3', ldoPins.output, rPins.a);
+		await connectPins('GND', ledPins.b, gndPins[0]);
+		await connectPins('VOUT_3V3', rPins.b, ledPins.a);
+		await connectPins('GND', ldoPins.ground, gndPins[0]);
+
+		appendLog('AMS1117-3.3 模板已完成：器件与连线已落到当前原理图页。', 'success');
+	}
+
+	async function buildGenericTemplate(plan) {
+		if (eda.sch_PrimitiveText) {
+			await eda.sch_PrimitiveText.create(10, 10, String(plan.title || 'AI Circuit'));
+			await eda.sch_PrimitiveText.create(10, 24, String(plan.summary || ''));
+		}
+
+		await createBlockFrames(plan);
+		await createNotes(plan);
+		await createPowerFlags(plan);
+		await createWires(plan);
 	}
 
 	async function resolveTargetSchematicPage(boardName) {
@@ -602,20 +702,17 @@
 
 		const plan = parsePlanJson(elements.planJson.value);
 		const boardName = elements.boardName.value.trim() || 'AI Board';
+		const template = inferTemplate(elements.request.value, plan);
 
 		appendLog('正在新建原理图和关联板子...', 'info');
 		const target = await resolveTargetSchematicPage(boardName);
 
-		if (eda.sch_PrimitiveText) {
-			await eda.sch_PrimitiveText.create(10, 10, String(plan.title || boardName));
-			await eda.sch_PrimitiveText.create(10, 24, String(plan.summary || ''));
+		if (template === 'ldo_3v3') {
+			await buildLdo33Template(plan);
 		}
-
-		await createBlockFrames(plan);
-		await createNotes(plan);
-		await createPowerFlags(plan);
-		await searchAndPlaceComponents(plan);
-		await createWires(plan);
+		else {
+			await buildGenericTemplate(plan);
+		}
 
 		if (eda.sch_Document?.save) {
 			await eda.sch_Document.save();
