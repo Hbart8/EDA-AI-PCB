@@ -116,6 +116,19 @@
 		return 'chat_completions';
 	}
 
+	function isHtmlResponse(text) {
+		if (typeof text !== 'string') {
+			return false;
+		}
+
+		const trimmed = text.trim().toLowerCase();
+		return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') || trimmed.startsWith('<head') || trimmed.startsWith('<body');
+	}
+
+	function buildHtmlResponseHint(url, mode) {
+		return `接口返回的是 HTML 页面，不是 JSON。通常说明你现在填写的 URL 不是实际 API 端点，而是网页、网关错误页、登录页或服务商首页。当前模式：${mode}。请确认 URL 结尾是否真的是 /v1/chat/completions 或 /v1/responses。URL：${url}`;
+	}
+
 	async function ensureOkResponse(response, mode, url) {
 		if (response.ok) {
 			return;
@@ -123,13 +136,18 @@
 
 		const bodyText = await response.text();
 		let reason = bodyText || `HTTP ${response.status}`;
+		if (isHtmlResponse(bodyText)) {
+			reason = buildHtmlResponseHint(url, mode);
+		}
 		try {
 			const bodyJson = JSON.parse(bodyText);
 			reason = bodyJson.error?.message || bodyJson.message || JSON.stringify(bodyJson).slice(0, 400) || reason;
 		}
 		catch (error) {
 			console.warn('Response is not JSON:', error);
-			reason = String(reason).slice(0, 400);
+			if (!isHtmlResponse(bodyText)) {
+				reason = String(reason).slice(0, 400);
+			}
 		}
 
 		if (response.status >= 500) {
@@ -137,6 +155,20 @@
 		}
 
 		throw new Error(`请求失败：HTTP ${response.status} ${reason}。当前接口模式：${mode}。URL：${url}`);
+	}
+
+	async function parseJsonResponse(response, mode, url) {
+		const rawText = await response.text();
+		if (isHtmlResponse(rawText)) {
+			throw new Error(buildHtmlResponseHint(url, mode));
+		}
+
+		try {
+			return JSON.parse(rawText);
+		}
+		catch (error) {
+			throw new Error(`接口返回的不是合法 JSON。当前模式：${mode}。URL：${url}。原始返回前 180 字符：${rawText.slice(0, 180)}`);
+		}
 	}
 
 	function stripCodeFences(text) {
@@ -224,7 +256,7 @@
 		const response = await eda.sys_ClientUrl.request(chatUrl, 'POST', JSON.stringify(requestBody), { headers: getAuthHeaders() });
 		await ensureOkResponse(response, mode, chatUrl);
 
-		const payload = await response.json();
+		const payload = await parseJsonResponse(response, mode, chatUrl);
 		if (mode === 'responses') {
 			return extractResponsesText(payload);
 		}
