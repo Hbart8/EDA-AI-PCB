@@ -381,32 +381,148 @@
 		}
 	}
 
+	function buildSearchQueries(component) {
+		const raw = [];
+		if (Array.isArray(component.searchKeywords)) {
+			raw.push(...component.searchKeywords);
+		}
+		if (component.name) {
+			raw.push(component.name);
+		}
+		if (component.value) {
+			raw.push(component.value);
+		}
+		if (component.ref) {
+			raw.push(component.ref);
+		}
+
+		const normalized = [];
+		const seen = new Set();
+		for (const item of raw) {
+			const text = String(item || '').trim();
+			if (!text) {
+				continue;
+			}
+			if (!seen.has(text)) {
+				seen.add(text);
+				normalized.push(text);
+			}
+
+			const upper = text.toUpperCase();
+			if ((upper.startsWith('R') || upper.startsWith('C') || upper.startsWith('D') || upper.startsWith('U')) && text.length <= 4) {
+				continue;
+			}
+
+			if (/AMS1117/i.test(text)) {
+				for (const extra of ['AMS1117-3.3', 'AMS1117', 'LDO']) {
+					if (!seen.has(extra)) {
+						seen.add(extra);
+						normalized.push(extra);
+					}
+				}
+			}
+
+			if (/LED/i.test(text)) {
+				for (const extra of ['LED', 'Light Emitting Diode']) {
+					if (!seen.has(extra)) {
+						seen.add(extra);
+						normalized.push(extra);
+					}
+				}
+			}
+
+			if (/电阻|resistor/i.test(text)) {
+				for (const extra of ['Resistor', 'R']) {
+					if (!seen.has(extra)) {
+						seen.add(extra);
+						normalized.push(extra);
+					}
+				}
+			}
+
+			if (/电容|capacitor/i.test(text)) {
+				for (const extra of ['Capacitor', 'C']) {
+					if (!seen.has(extra)) {
+						seen.add(extra);
+						normalized.push(extra);
+					}
+				}
+			}
+		}
+
+		return normalized;
+	}
+
+	function normalizeSymbolTypeResult(candidate) {
+		if (!candidate) {
+			return null;
+		}
+
+		return {
+			libraryUuid: candidate.libraryUuid,
+			uuid: candidate.uuid,
+			libraryType: 'SYMBOL',
+			name: candidate.name,
+		};
+	}
+
+	async function searchPlaceableComponent(component) {
+		const queries = buildSearchQueries(component);
+
+		for (const query of queries) {
+			try {
+				const deviceResults = await eda.lib_Device.search(String(query), undefined, undefined, undefined, 10, 1);
+				if (deviceResults && deviceResults.length > 0) {
+					return {
+						source: 'device',
+						query,
+						candidate: deviceResults[0],
+					};
+				}
+			}
+			catch (error) {
+				console.warn('device search failed:', query, error);
+			}
+
+			try {
+				if (eda.lib_Symbol?.search) {
+					const symbolResults = await eda.lib_Symbol.search(String(query), undefined, undefined, undefined, 10, 1);
+					if (symbolResults && symbolResults.length > 0) {
+						return {
+							source: 'symbol',
+							query,
+							candidate: normalizeSymbolTypeResult(symbolResults[0]),
+						};
+					}
+				}
+			}
+			catch (error) {
+				console.warn('symbol search failed:', query, error);
+			}
+		}
+
+		return null;
+	}
+
 	async function searchAndPlaceComponents(plan) {
 		if (!Array.isArray(plan.components)) {
 			return;
 		}
 
-		if (!eda.lib_Device || !eda.sch_PrimitiveComponent?.create) {
+		if ((!eda.lib_Device && !eda.lib_Symbol) || !eda.sch_PrimitiveComponent?.create) {
 			throw new Error('当前环境不支持自动放置原理图器件。');
 		}
 
 		for (const component of plan.components) {
-			const keywords = Array.isArray(component.searchKeywords) ? component.searchKeywords : [];
-			const query = keywords[0] || component.name || component.value || component.ref;
-			if (!query) {
-				appendLog(`跳过未提供检索关键词的器件 ${component.ref || 'Unknown'}`, 'error');
+			const match = await searchPlaceableComponent(component);
+			if (!match) {
+				const tried = buildSearchQueries(component).join(', ');
+				appendLog(`没有找到器件 ${component.ref || component.name || 'Unknown'}。尝试过的关键词：${tried}`, 'error');
 				continue;
 			}
 
-			const results = await eda.lib_Device.search(String(query), undefined, undefined, undefined, 10, 1);
-			if (!results || results.length === 0) {
-				appendLog(`没有在库里找到器件：${component.ref || query}，关键词：${query}`, 'error');
-				continue;
-			}
-
-			const chosen = results[0];
 			const primitive = await eda.sch_PrimitiveComponent.create(
-				chosen,
+				match.candidate,
 				Number(component.x || 0),
 				Number(component.y || 0),
 				undefined,
@@ -417,7 +533,7 @@
 			);
 
 			if (!primitive) {
-				appendLog(`器件放置失败：${component.ref || chosen.name}`, 'error');
+				appendLog(`器件放置失败：${component.ref || match.candidate.name}，匹配来源：${match.source}，关键词：${match.query}`, 'error');
 				continue;
 			}
 
@@ -431,7 +547,10 @@
 				await primitive.done();
 			}
 
-			appendLog(`已放置器件 ${component.ref || chosen.name}，检索关键词：${query}`, 'success');
+			appendLog(
+				`已放置器件 ${component.ref || match.candidate.name}，匹配来源：${match.source}，关键词：${match.query}`,
+				'success',
+			);
 		}
 	}
 
